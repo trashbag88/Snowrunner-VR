@@ -31,6 +31,7 @@ namespace {
 // its coordinate only where its key matches the winner. Ties (two surfaces at
 // the same quantised depth) resolve arbitrarily between equals, which is
 // exactly what a single-pass InterlockedMax would have done anyway.
+// Two literals: VS 2022's compiler refuses one over 16 KB (C2026).
 const char kHlsl[] = R"(
 cbuffer P : register(b0)
 {
@@ -250,7 +251,7 @@ bool to_ndc(float4x4 m, float4 world, out float3 ndc)
     ndc = c.xyz / c.w;
     return true;
 }
-
+)" R"(
 // Returns false when this source pixel has nothing to contribute.
 bool project(uint2 p, out int2 dst, out uint key)
 {

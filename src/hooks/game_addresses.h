@@ -71,6 +71,14 @@ struct GameAddresses {
     // would give a frozen frame a sixtieth of a second anyway.
     uintptr_t elapsedClampFlag = 0;
 
+    // Force feedback, which a frozen update must not reach (frame_sync.cpp). The
+    // truck control update -- combine::TRUCK_CONTROL::Process in MudRunner's PDB,
+    // with its ApplyFFeedback inlined at the end, force state at +0x30..+0x6C of
+    // the object -- and the call it hands each force command to, which queues it
+    // for the wheel's own thread.
+    uintptr_t truckControl = 0;
+    uintptr_t forcePost    = 0;
+
     // The engine's own way of changing its render size (resolution_hook.cpp).
     // settingsApply runs from OnFrameMove on every frame nothing is loading, and
     // is the only caller of displayApply: window, device lost, device reset. A

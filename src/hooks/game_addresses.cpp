@@ -169,6 +169,22 @@ constexpr const char* kSigElapsedClampFlag =
     "F3 44 0F 10 ?? ?? ?? ?? ?? 83 3D ?? ?? ?? ?? 00 74 ?? F3";
 constexpr int kElapsedClampCmp = 9;
 
+// THE WHEEL'S CONSTANT FORCE being posted, at the end of the truck control
+// update: the two filtered forces at +0x68/+0x60 summed into it, then a type-8
+// command (constant force) handed to the post call. One match gives both the
+// update it sits in and the post call. The offsets are the point of it --
+// frame_sync.cpp saves and restores this object's force state, +0x30..+0x6C,
+// around a frozen update, so if they move this has to fail.
+constexpr const char* kSigForcePost =
+    "F3 0F 10 47 68 F3 0F 58 47 60 F3 44 0F 58 C8 F3 45 0F 58 CD ?? 89 B5 ?? ?? ?? ?? "
+    "?? 89 B5 ?? ?? ?? ?? 0F 57 C0 F3 0F 7F 85 ?? ?? ?? ?? C7 85 ?? ?? ?? ?? 08 00 00 00 "
+    "F3 44 0F 11 8D ?? ?? ?? ?? E8 ?? ?? ?? ?? 48 8B C8 48 8D 95 ?? ?? ?? ?? E8";
+constexpr int kForcePostCall = 79;   // the post call's E8
+// In the same update: `this` into rdi near its start, and the turn's reference
+// direction stored back at +0x30 -- the first field of the force state.
+constexpr const char* kSigTruckThisRdi    = "48 8B F9";
+constexpr const char* kSigForceStateStore = "F2 0F 11 47 30";
+
 // The settings apply dispatching on what changed. Bit 0 (the display) and bit 7
 // (the window size) each call the display apply; between them is bit 8's own
 // call. One match gives both functions: the two calls have to agree, and the
@@ -352,6 +368,14 @@ bool exe_data(const void* p)
     MEMORY_BASIC_INFORMATION mbi{};
     return VirtualQuery(p, &mbi, sizeof(mbi)) && mbi.AllocationBase == g_exe &&
            (mbi.Protect & (PAGE_READWRITE | PAGE_WRITECOPY));
+}
+
+// `sig` starts somewhere in [from, to).
+bool found_in(const uint8_t* from, const uint8_t* to, const char* sig)
+{
+    for (const uint8_t* p = from; p < to; ++p)
+        if (pattern_matches_at(p, sig)) return true;
+    return false;
 }
 
 // Every global the game stores GetProcAddress(`name`) in. Found from the name
@@ -619,6 +643,31 @@ void resolve()
         a.elapsedClampFlag = report("elapsed clamp flag", g, "compare in OnFrameMove");
         if (!g)
             VRLOG("  %-22s NOT FOUND -- signature matches %d place(s)", "elapsed clamp flag", n);
+    }
+
+    {
+        // The force state is read through rdi, so the update has to be the one that
+        // keeps `this` there -- moved in near its start -- and the one that stores
+        // the state's first field.
+        uintptr_t truck = 0, post = 0;
+        uint8_t* hit = nullptr;
+        const int n = pattern_scan_all(g_exe, kSigForcePost, &hit, 1);
+        uint8_t* b = nullptr;
+        uint8_t* e = nullptr;
+        if (n == 1 && function_range(hit, b, e)) {
+            uint8_t* p = rel32_target(hit + kForcePostCall, 1, 5);
+            if (is_function_entry(p) && found_in(b, b + 0x100, kSigTruckThisRdi) &&
+                found_in(b, e, kSigForceStateStore)) {
+                truck = rva_of(b);
+                post  = rva_of(p);
+            }
+        }
+        a.truckControl = report("truck control", truck, "holds the force post");
+        a.forcePost    = report("force post", post, "call in truck control");
+        if (!truck)
+            VRLOG("  %-22s NOT FOUND -- signature matches %d place(s); under Synched "
+                  "Sequential a wheel's constant force can stick at full lock",
+                  "truck control", n);
     }
 
     {
