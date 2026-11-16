@@ -184,6 +184,11 @@ HRESULT STDMETHODCALLTYPE Detour_Present(IDXGISwapChain* sc, UINT sync, UINT fla
     // recording), so no per-Draw/per-CB call interception could reach them --
     // proven by draw census + CB probe. ExecuteCommandList is the one call that
     // DOES fire every frame for replayed work, which is what ui_hook targets.
+#if !SRVR_TRACKIR
+    // TrackIR build: none of these. They hook every draw call to take the HUD,
+    // glass and mirrors out for the headset's layers, and to probe depth for
+    // the synthesized eye -- with one view on a monitor there is nothing to
+    // take out or synthesize.
     hooks::install_ui_hook(sc);
     // After install_ui_hook: this only supplies the decision, ui_hook owns the
     // draw slots that act on it.
@@ -191,9 +196,12 @@ HRESULT STDMETHODCALLTYPE Detour_Present(IDXGISwapChain* sc, UINT sync, UINT fla
     hooks::install_depth_probe(sc);       // DIBR shift phase 0 recon (docs/dibr_shift_plan.md)
     hooks::depth_probe_on_present(sc);
     hooks::shader_cull_on_present();
+#endif
     hooks::viewbuild_on_present();
     hooks::camera_fov_on_present();
+#if !SRVR_TRACKIR
     hooks::ui_hook_on_present(sc);
+#endif
     hooks::cbuffer_hook_on_present();
     // Menu update runs BEFORE mirror_on_present() -- it builds this Present's
     // ImGui draw data (NewFrame/Render) without touching any render target
@@ -209,14 +217,17 @@ HRESULT STDMETHODCALLTYPE Detour_Present(IDXGISwapChain* sc, UINT sync, UINT fla
     hooks::install_menu_hook(sc);
     hooks::menu_hook_update();
     xr::mirror_on_present(sc);
+#if !SRVR_TRACKIR
     dlss::on_present();
     motionfield::on_present();
+#endif
     hooks::menu_render_to_desktop(sc);
 
     // Mirror mask: sized/released here, and cleared AFTER DIBR shift has read it this
     // Present. The game renders the next frame once this returns, so its mirror
     // draws land in a mask that starts empty. See mirror_mask.hpp.
-    {
+    // (TrackIR build: no masks or layers -- nothing reprojects or composites.)
+    if (!SRVR_TRACKIR) {
         Microsoft::WRL::ComPtr<ID3D11Device> dev;
         Microsoft::WRL::ComPtr<ID3D11DeviceContext> imm;
         uint32_t cw = 0, ch = 0;
@@ -403,6 +414,7 @@ HRESULT STDMETHODCALLTYPE Detour_CreateSwapChain(
         // (the device doesn't exist before this), and is the only way to have
         // a chance of catching that recording live.
         hooks::install_cbuffer_hook(*out);
+#if !SRVR_TRACKIR
         hooks::install_ui_hook(*out);
         // Earliest possible point, and it matters more here than for the
         // others: every pixel shader the game creates BEFORE this attaches has
@@ -410,6 +422,7 @@ HRESULT STDMETHODCALLTYPE Detour_CreateSwapChain(
         // never saved to the config file.
         hooks::install_shader_cull(*out);
         hooks::install_depth_probe(*out);
+#endif
     }
     return hr;
 }
@@ -438,9 +451,11 @@ HRESULT STDMETHODCALLTYPE Detour_CreateSCForHwnd(
         hook_present_once(*ppsc);
         // See the matching comment in Detour_CreateSwapChain.
         hooks::install_cbuffer_hook(*ppsc);
+#if !SRVR_TRACKIR
         hooks::install_ui_hook(*ppsc);
         hooks::install_shader_cull(*ppsc);   // see Detour_CreateSwapChain
         hooks::install_depth_probe(*ppsc);
+#endif
     }
     return hr;
 }

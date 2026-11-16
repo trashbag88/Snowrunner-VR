@@ -7283,6 +7283,9 @@ bool offcenter_projection() { return g_offcenter.load(std::memory_order_relaxed)
 // bucket would otherwise swallow it.
 bool flat_screen_active()
 {
+    // TrackIR build: the "2D panel in the headset" mode does not exist -- the
+    // whole game is on a monitor, and head look is gated in head_look().
+    if (SRVR_TRACKIR) return false;
     if (on_map_screen())
         return g_mapRender.load(std::memory_order_relaxed) == kScreenRender2D;
     if (!hooks::in_gameplay())
@@ -7658,6 +7661,7 @@ void mirror_on_present(IDXGISwapChain* swapchain)
 {
     // Which camera build the image in the backbuffer was drawn with, before
     // anything below routes it to an eye or declares a pose for it.
+    // (Kept in the TrackIR build: hooks::in_gameplay() reads it.)
     update_on_screen();
 #if SRVR_TRACKIR
     trackir_present(swapchain);

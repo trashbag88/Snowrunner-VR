@@ -2,6 +2,7 @@
 #include "../common/log.h"
 #include <atomic>
 #include <cmath>
+#include <cstdarg>
 #include <cstdio>
 #include <cwchar>
 #include <string>
@@ -65,7 +66,21 @@ FILETIME          g_iniTime{};
 unsigned short    g_lastFrame = 0;
 DWORD             g_lastNewFrameMs = 0;
 std::atomic<bool> g_recenterPending{false};
+std::atomic<unsigned> g_dropped{0};
 std::wstring      g_iniPath;
+char              g_status[128] = "Waiting for TrackIR";   // guarded by g_lock
+
+void set_status(const char* fmt, ...)
+{
+    char buf[128];
+    va_list a;
+    va_start(a, fmt);
+    vsnprintf(buf, sizeof(buf), fmt, a);
+    va_end(a);
+    AcquireSRWLockExclusive(&g_lock);
+    memcpy(g_status, buf, sizeof(g_status));
+    ReleaseSRWLockExclusive(&g_lock);
+}
 
 std::wstring dll_dir()
 {
@@ -213,6 +228,7 @@ void connect()
     auto fail = [](const char* step, int r) {
         if (r != s_lastErr) VRLOG("TrackIR: %s failed (NPResult %d) -- retrying every 3 s", step, r);
         s_lastErr = r;
+        set_status("Not connected: %s failed (%d), retrying", step, r);
     };
 
     int r = g_api.registerWindow(g_hwnd);
@@ -243,6 +259,7 @@ void connect()
     g_lastNewFrameMs = now;
     s_lastErr = -1;
     VRLOG("TrackIR: connected as profile ID %d", g_set.profileId);
+    set_status("Connected, profile ID %d", g_set.profileId);
 }
 
 void read_frame()
@@ -262,18 +279,60 @@ void read_frame()
     g_lastFrame = d.frameSignature;
     g_lastNewFrameMs = GetTickCount();
 
-    // GLITCH FRAMES. Seen 2026-11-15 on TrackIR 5.5.3: single frames with axes
-    // pinned at exactly +-16383 (yaw +-180 deg, x/y +-50 cm) between normal ones,
-    // presumably the camera briefly mis-reading the clip. No head pose sits on
-    // the clamp, so a frame with any axis there is dropped and the last good
-    // pose held -- otherwise the in-game view snaps round for a frame.
+    // GLITCH FRAMES. Seen 2026-11-15 on TrackIR 5.5.3: frames with several axes
+    // pinned at exactly +-16383 at once (yaw +-180 deg AND x/y +-50 cm) between
+    // normal ones, presumably the camera briefly mis-reading the clip. Held at
+    // the last good pose, or the in-game view snaps round.
+    //
+    // BUT ONE AXIS ON THE LIMIT CAN BE REAL. Also seen 2026-11-15: a seat and
+    // camera placement that keeps one axis at the limit for as long as the
+    // player sits there. Dropping every such frame threw away more than half
+    // of them. So a frame is a glitch only if
+    //   - two or more axes sit on the limit together, or
+    //   - one axis JUMPED there from far away (> 40% of its range) -- and even
+    //     that stops counting once it has stayed there 0.25 s, because a head
+    //     that is really there stays there.
     const float axes[6] = {d.roll, d.pitch, d.yaw, d.x, d.y, d.z};
-    for (float a : axes) {
-        if (!(std::fabs(a) < kMaxValue - 0.5f)) {
-            static unsigned s_dropped = 0;
-            if ((++s_dropped & (s_dropped - 1)) == 0)   // 1, 2, 4, 8... so it stays quiet
-                VRLOG("TrackIR: dropped %u glitch frame(s) with an axis at the limit", s_dropped);
-            return;
+    static float s_lastGood[6] = {};
+    static DWORD s_limitSince[6] = {};   // when each axis reached the limit (0 = not there)
+    const DWORD nowMs = GetTickCount();
+    unsigned atLimit = 0, jumped = 0, axesAtLimit = 0;   // bit per axis
+    for (int i = 0; i < 6; ++i) {
+        if (std::fabs(axes[i]) < kMaxValue - 0.5f) { s_limitSince[i] = 0; continue; }
+        atLimit |= 1u << i;
+        ++axesAtLimit;
+        if (!s_limitSince[i]) s_limitSince[i] = nowMs ? nowMs : 1;
+        const bool fromFar = std::fabs(axes[i] - s_lastGood[i]) > 0.4f * 2.0f * kMaxValue;
+        if (fromFar && nowMs - s_limitSince[i] < 250) jumped |= 1u << i;
+    }
+    if (axesAtLimit >= 2 || jumped) {
+        // Per-axis counts, so the log can say WHICH axis sits on the limit: one
+        // axis every frame is a profile curve saturating, several at once is the
+        // camera losing the clip.
+        static unsigned s_axisCount[6] = {};
+        for (int i = 0; i < 6; ++i)
+            if (atLimit & (1u << i)) ++s_axisCount[i];
+        const unsigned n = g_dropped.fetch_add(1) + 1;
+        if ((n & (n - 1)) == 0) {   // 1, 2, 4, 8... so it stays quiet
+            VRLOG("TrackIR: dropped %u glitch frame(s) with an axis at the limit -- so far "
+                  "roll %u pitch %u yaw %u x %u y %u z %u; this one: %s%s%s%s%s%s(raw yaw %.0f pitch %.0f "
+                  "roll %.0f x %.0f y %.0f z %.0f)", n, s_axisCount[0], s_axisCount[1], s_axisCount[2],
+                  s_axisCount[3], s_axisCount[4], s_axisCount[5],
+                  (atLimit & 1) ? "roll " : "", (atLimit & 2) ? "pitch " : "", (atLimit & 4) ? "yaw " : "",
+                  (atLimit & 8) ? "x " : "", (atLimit & 16) ? "y " : "", (atLimit & 32) ? "z " : "",
+                  d.yaw, d.pitch, d.roll, d.x, d.y, d.z);
+        }
+        return;
+    }
+    for (int i = 0; i < 6; ++i) s_lastGood[i] = axes[i];
+    if (atLimit) {
+        static DWORD s_nextLimitLog = 0;
+        if (nowMs > s_nextLimitLog) {
+            s_nextLimitLog = nowMs + 30000;
+            VRLOG("TrackIR: %s%s%s%s%s%sat the limit and accepted (a real position; that axis has "
+                  "no range left -- recenter, or turn its curve down in the TrackIR profile)",
+                  (atLimit & 1) ? "roll " : "", (atLimit & 2) ? "pitch " : "", (atLimit & 4) ? "yaw " : "",
+                  (atLimit & 8) ? "x " : "", (atLimit & 16) ? "y " : "", (atLimit & 32) ? "z " : "");
         }
     }
 
@@ -361,6 +420,17 @@ void recenter()
     g_recenterPending.store(true);
     VRLOG("TrackIR: recenter requested");
 }
+
+void status_text(char* out, size_t size)
+{
+    if (!out || !size) return;
+    AcquireSRWLockShared(&g_lock);
+    const bool live = g_connected && g_raw.valid;
+    snprintf(out, size, "%s%s", g_status, g_connected && !live ? " (no head data: paused or out of view)" : "");
+    ReleaseSRWLockShared(&g_lock);
+}
+
+unsigned dropped_frames() { return g_dropped.load(); }
 
 bool cockpit_only()
 {

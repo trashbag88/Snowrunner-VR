@@ -7,6 +7,13 @@ head-look injection, and takes the head pose from the TrackIR 5 software
 
 - Head look runs only while driving, and by default only in the cab (`CockpitOnly`).
 - **HOME** recenters (TrackIR's own center key works too).
+- **Insert** opens the menu: a TrackIR tab (connection status, recenter, menu
+  size and keys) and the Camera tab (cockpit locks, seat offset, head smoothing).
+- The VR-only hooks are not installed: no per-draw hooks, depth probe, frame
+  sync, resolution or marker hooks. So the VR mod's Hide HUD and Disable
+  windows options don't exist here.
+- Glitch frames (several axes pinned at the limit at once, or a one-frame jump
+  to it) are ignored. An axis that really sits at the limit is kept.
 - Settings: `Snowrunner_TrackIR.ini` beside the DLL, written on first run and
   re-read while the game runs. Flip an axis with a negative `*Scale`.
 - Its files never collide with the VR mod's: `Snowrunner_TrackIR_config.txt`,

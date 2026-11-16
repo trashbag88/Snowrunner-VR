@@ -20,6 +20,9 @@
 #include "render/motion_overlay.hpp"
 #include "xr/xr_mirror.h"
 #include "xr/xr_input.h"
+#if SRVR_TRACKIR
+#include "trackir/trackir.h"
+#endif
 
 #include <d3d11.h>
 #include <wrl/client.h>
@@ -918,6 +921,7 @@ void draw_camera_tab()
 
     // Logarithmic, so 100% sits in the middle: half and double size are the
     // same distance either side of it.
+#if !SRVR_TRACKIR   // stereo only: the TrackIR build's head pose never reads it
     float worldPct = xr::world_scale() * 100.0f;
     if (ImGui::SliderFloat("World scale", &worldPct, 50.0f, 200.0f, "%.0f%%",
                            ImGuiSliderFlags_Logarithmic)) {
@@ -929,6 +933,7 @@ void draw_camera_tab()
                           "renders the eyes half as far apart and moves the view\n"
                           "half as far as your head, so everything looks twice\n"
                           "the size. Every 3D view.");
+#endif
 
     // Milliseconds here, seconds in the hook (hooks::head_smoothing).
     float smoothMs = hooks::head_smoothing() * 1000.0f;
@@ -1920,6 +1925,62 @@ void draw_rigid_tab()
 }
 
 struct MenuTab { const char* name; void (*draw)(); };
+#if SRVR_TRACKIR
+// THE TRACKIR TAB, in place of the VR Settings tab: what is connected, the
+// recenter, and the two things from Settings that still apply on a monitor --
+// this panel's size and the menu bindings. Everything else in that tab (render
+// method, warp, DIBR, headset UI plane, map/garage panels, resolution, VR
+// controllers, window/HUD culling) has nothing to act on in this build.
+void draw_trackir_tab()
+{
+    ImGui::TextDisabled("%.0f FPS", g_fps.load());
+
+    char status[192];
+    trackir::status_text(status, sizeof(status));
+    ImGui::TextWrapped("TrackIR: %s", status);
+    if (const unsigned dropped = trackir::dropped_frames())
+        ImGui::TextDisabled("Glitch frames ignored: %u", dropped);
+
+    if (ImGui::Button("Recenter view", ImVec2(-1.0f, 0.0f)))
+        xr::request_recenter();
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("Makes where your head is now the centre.\n"
+                          "Same as the HOME key. TrackIR's own centre key works too.");
+
+    ImGui::TextWrapped("Per-axis scale and direction, roll, lean and cockpit-only are in "
+                       "Snowrunner_TrackIR.ini next to the mod; saved changes apply straight away.");
+    ImGui::Separator();
+
+    {   // Same as on the VR Settings tab: applied when the slider is let go.
+        static float s_pendingPct = -1.0f;
+        float modUiPct = (s_pendingPct > 0.0f) ? s_pendingPct : mod_ui_scale() * 100.0f;
+        if (ImGui::SliderFloat("Mod UI size", &modUiPct, 50.0f, 250.0f, "%.0f%%"))
+            s_pendingPct = modUiPct;
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Size of this panel. Applies when you let go.");
+        if (s_pendingPct > 0.0f && !ImGui::IsItemActive()) {
+            set_mod_ui_scale(s_pendingPct / 100.0f);
+            vrcfg::save();
+            s_pendingPct = -1.0f;
+        }
+    }
+
+    ImGui::Separator();
+    ImGui::Text("Menu key: %s", vrcfg::vk_name(menu_toggle_vk()).c_str());
+    ImGui::SameLine();
+    if (ImGui::Button("Rebind##key"))
+        begin_keyboard_capture();
+    ImGui::Text("Menu gamepad combo: %s", vrcfg::gamepad_combo_name(menu_toggle_gamepad_combo()).c_str());
+    ImGui::SameLine();
+    if (ImGui::Button("Rebind##pad"))
+        begin_gamepad_capture();
+}
+
+constexpr MenuTab kTabs[] = {
+    { "TrackIR",     &draw_trackir_tab },
+    { "Camera",      &draw_camera_tab },
+};
+#else
 constexpr MenuTab kTabs[] = {
     { "Settings",    &draw_settings_tab },
     { "Camera",      &draw_camera_tab },
@@ -1928,6 +1989,7 @@ constexpr MenuTab kTabs[] = {
     { "Shader Cull", &draw_cull_tab },
     { "Rigid",       &draw_rigid_tab },
 };
+#endif
 constexpr int kTabCount = (int)(sizeof(kTabs) / sizeof(kTabs[0]));
 
 // g_activeTab is learned from ImGui rather than assumed, so a tab picked with

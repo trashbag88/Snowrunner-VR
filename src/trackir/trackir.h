@@ -40,6 +40,12 @@ void recenter();
 // Head look only in the cockpit view (ini: CockpitOnly, default on).
 bool cockpit_only();
 
+// One line for the settings menu: connected / waiting / why not.
+void status_text(char* out, size_t size);
+
+// Glitch frames dropped this session (axes pinned at the limit).
+unsigned dropped_frames();
+
 void shutdown();
 
 } // namespace trackir

@@ -110,12 +110,17 @@ static void install_hooks_on(void** ppFactory)
         // CPU-side head tracking, stereo and the FOV lock: the camera-build
         // and projection hooks, at the addresses resolved just above.
         hooks::install_viewbuild_hook();
+#if !SRVR_TRACKIR
+        // (TrackIR build: none of the three below -- no stereo pairs to freeze
+        // the game for, no headset resolution to resize to, and no world
+        // markers to re-project into a headset.)
         // The engine's frame callbacks, for Synched Sequential's freeze.
         hooks::install_frame_sync();
         // The engine's own resize, for the settings menu.
         hooks::install_live_resize();
         // The UI's camera, for the camera-pointer world marker fix.
         hooks::install_marker_camera();
+#endif
     }
 }
 

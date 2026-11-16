@@ -78,7 +78,10 @@ BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason, LPVOID)
         // strictly before the exe's entry point runs, which is where the
         // window -- and the resolution decision this is meant to unblock --
         // gets made. DllMain is the only place that satisfies both.
+#if !SRVR_TRACKIR
+        // (TrackIR build: the game keeps its own resolution handling.)
         hooks::install_resolution_hooks();
+#endif
         // Same reasoning: the game creates its DirectInput devices during
         // startup, so the DirectInput8Create hook has to be in place before
         // the exe's entry point runs. Only needs hooks::init() (MinHook) --
