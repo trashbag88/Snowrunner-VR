@@ -1,3 +1,24 @@
+# SnowRunner TrackIR (fork of SnowRunner VR)
+
+This fork builds a **flat-screen TrackIR** variant of Timguin's VR mod (CMake
+option `SRVR_TRACKIR`, on by default). It keeps the VR mod's game hooks and
+head-look injection, and takes the head pose from the TrackIR 5 software
+(`NPClient64.dll`) instead of OpenXR. No headset, no stereo, no eye alternation.
+
+- Head look runs only while driving, and by default only in the cab (`CockpitOnly`).
+- **HOME** recenters (TrackIR's own center key works too).
+- Settings: `Snowrunner_TrackIR.ini` beside the DLL, written on first run and
+  re-read while the game runs. Flip an axis with a negative `*Scale`.
+- Its files never collide with the VR mod's: `Snowrunner_TrackIR_config.txt`,
+  `snowrunner_trackir.log`, `snowrunner_trackir_imgui.ini`.
+- `build\Release\trackir_probe.exe` reads TrackIR with no game running, to check
+  the connection and which way each axis points.
+- Built without DLSS/FSR (`SRVR_HAVE_DLSS=0`, `SRVR_HAVE_FSR=0`).
+
+`-DSRVR_TRACKIR=OFF` builds the original VR mod. The upstream README follows.
+
+---
+
 # SnowRunner VR
 
 ![SnowRunner VR](Snowrunner_VR.jpg)

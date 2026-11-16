@@ -2087,6 +2087,9 @@ void install_menu_hook(IDXGISwapChain* swapchain)
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
     ImGuiIO& io = ImGui::GetIO();
+#if SRVR_TRACKIR
+    io.IniFilename = "snowrunner_trackir_imgui.ini";   // leave the VR mod's imgui.ini alone
+#endif
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard | ImGuiConfigFlags_NavEnableGamepad;
     ImGui::StyleColorsDark();
     g_baseStyle = ImGui::GetStyle();

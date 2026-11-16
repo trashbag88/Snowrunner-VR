@@ -51,7 +51,12 @@ std::wstring dll_dir()
     return std::wstring(path);
 }
 
+#if SRVR_TRACKIR
+// Its own file: the VR mod's settings stay exactly as they are while this build is installed.
+std::wstring config_path() { return dll_dir() + L"Snowrunner_TrackIR_config.txt"; }
+#else
 std::wstring config_path() { return dll_dir() + L"Snowrunner_VR_config.txt"; }
+#endif
 
 // --- raw Win32 file I/O (no CRT FILE*, matching log.cpp's idiom) ------
 
@@ -383,7 +388,11 @@ constexpr bool kDefaultCullShaders = false;
 // The cab glass, skipped by default. It refracts the scene behind it but writes
 // no depth, so it is wrong under any reprojection and awkward in stereo even
 // without one -- a refracting surface a few centimetres from the eyes.
+#if SRVR_TRACKIR
+constexpr bool kDefaultDisableWindows = false;   // on a monitor the glass is just glass
+#else
 constexpr bool kDefaultDisableWindows = true;
+#endif
 constexpr bool kDefaultDepthAtTaaResolve = true;
 
 struct Settings {

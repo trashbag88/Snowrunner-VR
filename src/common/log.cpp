@@ -18,7 +18,11 @@ void init(HMODULE self)
     for (wchar_t* p = path + len; p > path; --p) {
         if (p[-1] == L'\\') { *p = L'\0'; break; }
     }
+#if SRVR_TRACKIR
+    lstrcatW(path, L"snowrunner_trackir.log");   // never truncate the VR mod's log
+#else
     lstrcatW(path, L"snowrunner_vr.log");
+#endif
     g_file = CreateFileW(path, GENERIC_WRITE, FILE_SHARE_READ, nullptr,
                          CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
 }

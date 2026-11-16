@@ -63,6 +63,18 @@ add_library(dxgi_proxy SHARED
     src/render/winch_layer.cpp
     src/render/frame_dump.cpp
     src/xr/xr_mirror.cpp
+    # Present in upstream's src/ but missing from its CMakeLists.txt.
+    src/hooks/frame_sync.cpp
+    src/hooks/game_addresses.cpp
+    src/hooks/marker_camera.cpp
+    src/render/dlss.cpp
+    src/render/fsr.cpp
+    src/render/motion_field.cpp
+    src/render/motion_overlay.cpp
+    src/render/sharpen.cpp
+    src/xr/xr_input.cpp
+    src/trackir/trackir.cpp
+    src/proxy/version.rc
     # Dear ImGui (no CMakeLists.txt upstream; compiled directly into this target)
     ${imgui_SOURCE_DIR}/imgui.cpp
     ${imgui_SOURCE_DIR}/imgui_draw.cpp
@@ -78,7 +90,13 @@ set_target_properties(dxgi_proxy PROPERTIES OUTPUT_NAME "dxgi" PREFIX "")
 # back into a function. Keep the map for any build that is given out.
 target_link_options(dxgi_proxy PRIVATE /MAP)
 target_include_directories(dxgi_proxy PRIVATE src ${imgui_SOURCE_DIR} ${imgui_SOURCE_DIR}/backends)
+# This fork's flat-screen TrackIR build: no OpenXR session, head pose from
+# TrackIR's NPClient (src/trackir). OFF builds the original VR mod.
+option(SRVR_TRACKIR "Build the flat-screen TrackIR variant" ON)
 target_compile_definitions(dxgi_proxy PRIVATE
+    SRVR_TRACKIR=$<BOOL:${SRVR_TRACKIR}>
+    # No NVIDIA/AMD SDK download in this fork: the upscaler code compiles to stubs.
+    SRVR_HAVE_DLSS=0 SRVR_HAVE_FSR=0
     WIN32_LEAN_AND_MEAN NOMINMAX
     XR_USE_GRAPHICS_API_D3D11 XR_USE_PLATFORM_WIN32
     IMGUI_IMPL_WIN32_DISABLE_GAMEPAD   # we poll XInput ourselves once/frame (menu_hook.cpp);
@@ -91,6 +109,11 @@ target_compile_definitions(dxgi_proxy PRIVATE
 # DirectInput entry point is reached through a hook, never called directly.
 target_link_libraries(dxgi_proxy PRIVATE minhook openxr_loader d3d11 d3dcompiler
                                         windowscodecs ole32 xinput psapi dxguid)
+
+# TrackIR reader on its own, no game: checks the connection and axis directions.
+add_executable(trackir_probe tools/trackir_probe.cpp src/trackir/trackir.cpp)
+target_include_directories(trackir_probe PRIVATE src)
+target_compile_definitions(trackir_probe PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 
 # --- tests -------------------------------------------------------------------
 # Host-side only: this links nothing but a header, so it builds and runs on the

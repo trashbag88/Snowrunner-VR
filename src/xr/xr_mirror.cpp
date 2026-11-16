@@ -24,6 +24,9 @@
 #include "xr/xr_input.h"
 #include "common/dibr_policy.h"
 #include "common/log.h"
+#if SRVR_TRACKIR
+#include "trackir/trackir.h"
+#endif
 
 #include <algorithm>
 #include <d3d11.h>
@@ -1317,7 +1320,11 @@ struct XrState {
 } g;
 
 bool upscaled_canvas() { return g.bbWidth && (g.width != g.bbWidth || g.height != g.bbHeight); }
+#if SRVR_TRACKIR
+bool dibr_shift_runs() { return false; }   // no second eye to synthesize
+#else
 bool dibr_shift_runs() { return g_dibrShift.load() && !upscaled_canvas(); }
+#endif
 
 // --- DIBR shift projection parameters, derived live from the game's own camera CB ---
 // proj = viewProj * view^-1; the depth row gives z_ndc = A + B/z_view, and
@@ -6505,6 +6512,30 @@ HeadLook head_look()
     // pinned per the UI setting, which the compositor honours whatever the
     // game's camera is doing. Head-locked, the screen comes with you; pinned,
     // you can look away from it. Neither moves the view inside it.
+#if SRVR_TRACKIR
+    // TRACKIR BUILD: the pose comes from TrackIR, on a monitor. Only while
+    // actually driving -- the menus, map and garage keep the game's own camera
+    // -- and, with CockpitOnly (the default), only in the cab.
+    {
+        HeadLook h;
+        if (!hooks::drive_camera_live()) return h;
+        if (trackir::cockpit_only()) {
+            const int cab = hooks::drive_camera_cockpit();
+            const bool inCab = cab >= 0 ? cab == 1 : hooks::logic_mode() >= 0.75f;
+            if (!inCab) return h;
+        }
+        const trackir::Pose p = trackir::pose();
+        if (!p.valid) return h;
+        h.valid = true;
+        // YAW IS NEGATED, MEASURED IN GAME 2026-11-15: trackir::Pose gives
+        // +yaw = look left (checked with trackir_probe), and with it passed
+        // through as-is the cab view turned the opposite way to the head.
+        // Pitch and roll were right as they are.
+        h.yaw = -p.yaw; h.pitch = p.pitch; h.roll = p.roll;
+        h.ox = p.x; h.oy = p.y; h.oz = p.z;
+        return h;
+    }
+#endif
     if (flat_screen_active()) return HeadLook{};
 
     AcquireSRWLockShared(&g_poseLock);
@@ -6617,7 +6648,11 @@ bool upscale_canvas(uint32_t& w, uint32_t& h)
 // eyes, but AER still alternates the camera by +/-IPD/2 every frame -- so the
 // panel would shake left and right at half the frame rate. There is no stereo
 // to keep on a mono quad, so the offset simply stops being applied.
+#if SRVR_TRACKIR
+float eye_side_offset() { return 0.0f; }   // one view on a monitor: no eyes to separate
+#else
 float eye_side_offset() { return flat_screen_active() ? 0.0f : g_eyeSide.load(); }
+#endif
 
 float world_scale() { return g_worldScale.load(); }
 
@@ -7493,6 +7528,9 @@ void request_recenter()
     // THE explicit recenter: position, yaw to wherever the head is looking, and
     // the UI plane with it. Pitch and roll are untouched, so the horizon stays
     // world-locked through it.
+#if SRVR_TRACKIR
+    trackir::recenter();
+#endif
     g_recenterRequest.fetch_or(kRecenterPos | kRecenterYawToView);
 }
 
@@ -7589,11 +7627,42 @@ static void follow_game_frame()
     g.height = h;
 }
 
+#if SRVR_TRACKIR
+// TRACKIR BUILD: no OpenXR at all, and none of the AER-only fallback either --
+// that one still alternates the camera by +-IPD/2 and shows the monitor one eye
+// in two. Every frame is a whole frame; the camera hooks just get a head pose.
+static void trackir_present(IDXGISwapChain* swapchain)
+{
+    g_presents.fetch_add(1);
+    g_failed = true;              // "no XR session" for everything that asks
+    g_ipd.store(0.0f);
+    g_newFrame.store(true);
+    hooks::set_frame_freeze(false);
+    if (!g.device) {
+        ComPtr<ID3D11Device> dev;
+        if (SUCCEEDED(swapchain->GetDevice(__uuidof(ID3D11Device), (void**)&dev))) {
+            g.device = dev;
+            dev->GetImmediateContext(&g.ctx);
+        }
+    }
+    static HWND s_hwnd = nullptr;
+    if (!s_hwnd) {
+        DXGI_SWAP_CHAIN_DESC sd{};
+        if (SUCCEEDED(swapchain->GetDesc(&sd))) s_hwnd = sd.OutputWindow;
+    }
+    trackir::poll(s_hwnd);
+}
+#endif
+
 void mirror_on_present(IDXGISwapChain* swapchain)
 {
     // Which camera build the image in the backbuffer was drawn with, before
     // anything below routes it to an eye or declares a pose for it.
     update_on_screen();
+#if SRVR_TRACKIR
+    trackir_present(swapchain);
+    return;
+#endif
 
     if (g_failed) { hooks::set_frame_freeze(false); aer_only_present(swapchain); return; }
     if (!g_inited) {
@@ -7699,6 +7768,9 @@ void shutdown_xr()
 {
     static std::atomic<bool> s_done{false};
     if (s_done.exchange(true)) return;
+#if SRVR_TRACKIR
+    trackir::shutdown();
+#endif
     if (g.instance == XR_NULL_HANDLE) return;
 
     end_frame_wait();
