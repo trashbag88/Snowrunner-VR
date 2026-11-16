@@ -6495,6 +6495,8 @@ void render_frame(IDXGISwapChain* swapchain)
 
 } // namespace
 
+bool on_map_screen(); // defined further down, with the screen classifiers
+
 HeadLook head_look()
 {
     // NO HEAD INPUT ON A FLAT SCREEN. The panel is a fixed window onto the
@@ -6519,6 +6521,10 @@ HeadLook head_look()
     {
         HeadLook h;
         if (!hooks::drive_camera_live()) return h;
+        // THE MAP keeps the drive camera ticking, so the gate above lets it
+        // through -- and head look then panned the map terrain (reported
+        // 2026-11-16). The map is the game's own camera, always.
+        if (on_map_screen()) return h;
         if (trackir::cockpit_only()) {
             const int cab = hooks::drive_camera_cockpit();
             const bool inCab = cab >= 0 ? cab == 1 : hooks::logic_mode() >= 0.75f;
@@ -6530,8 +6536,9 @@ HeadLook head_look()
         // YAW IS NEGATED, MEASURED IN GAME 2026-11-15: trackir::Pose gives
         // +yaw = look left (checked with trackir_probe), and with it passed
         // through as-is the cab view turned the opposite way to the head.
-        // Pitch and roll were right as they are.
-        h.yaw = -p.yaw; h.pitch = p.pitch; h.roll = p.roll;
+        // Pitch is right as it is. ROLL IS NEGATED too, reported 2026-11-16:
+        // tilting the head left rolled the view right.
+        h.yaw = -p.yaw; h.pitch = p.pitch; h.roll = -p.roll;
         h.ox = p.x; h.oy = p.y; h.oz = p.z;
         return h;
     }
